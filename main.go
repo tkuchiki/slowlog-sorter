@@ -12,7 +12,8 @@ import (
 
 type Config struct {
 	Reverse           bool
-	Pattern           string
+	Include           string
+	Exclude           string
 	Line              int
 	Pretty            bool
 	QueryTimeBegin    string
@@ -39,7 +40,8 @@ var (
 	file     = kingpin.Flag("file", "slow query log").Short('f').String()
 	reverse  = kingpin.Flag("reverse", "reverse the result of comparisons").Short('r').Bool()
 	pretty   = kingpin.Flag("pretty", "pretty print").Bool()
-	pattern  = kingpin.Flag("query-pattern", "query matching PATTERN").Short('p').PlaceHolder("PATTERN").String()
+	include  = kingpin.Flag("include", "don't exclude query matching PATTERN").Short('i').PlaceHolder("PATTERN").String()
+	exclude  = kingpin.Flag("exclude", "exclude query matching PATTERN").Short('e').PlaceHolder("PATTERN").String()
 	sortBy   = kingpin.Flag("sort", "sort by (query_time, lock_time, rows_sent, rows_examined, time)").Short('s').Default("query_time").String()
 	nol      = kingpin.Flag("num", "number of lines (0 = all)").Short('n').Default("0").Int()
 	qtBegin  = kingpin.Flag("query-time-begin", "query_time begin").PlaceHolder("TIME").String()
@@ -58,7 +60,7 @@ var (
 
 func main() {
 	kingpin.CommandLine.Help = "MySQL slow query log sorter (read from file or stdin)."
-	kingpin.Version("0.2.0")
+	kingpin.Version("0.2.1")
 	kingpin.Parse()
 
 	fileinfo, err := os.Stdin.Stat()
@@ -80,7 +82,8 @@ func main() {
 	parser := slowlog.NewParser()
 	c := Config{
 		Reverse:           *reverse,
-		Pattern:           *pattern,
+		Include:           *include,
+		Exclude:           *exclude,
 		Line:              *nol,
 		Pretty:            *pretty,
 		QueryTimeBegin:    *qtBegin,
@@ -110,7 +113,8 @@ func main() {
 
 	slowlogs := SlowLogs{}
 
-	re := regexp.MustCompile(c.Pattern)
+	reInc := regexp.MustCompile(c.Include)
+	reExc := regexp.MustCompile(c.Exclude)
 	i := 1
 	for parsed := range parser.Parse(f) {
 
@@ -118,7 +122,11 @@ func main() {
 			continue
 		}
 
-		if c.Pattern != "" && !re.Match([]byte(parsed.Sql)) {
+		if c.Exclude != "" && reExc.Match([]byte(parsed.Sql)) {
+			continue
+		}
+
+		if c.Include != "" && !reInc.Match([]byte(parsed.Sql)) {
 			continue
 		}
 
