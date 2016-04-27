@@ -1,11 +1,9 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"regexp"
-	"sort"
 	"time"
 
 	"github.com/handlename/go-mysql-slowlog-parser"
@@ -13,124 +11,54 @@ import (
 )
 
 type Config struct {
-	Reverse bool
-	Pattern string
-	Line    int
-	Pretty  bool
+	Reverse           bool
+	Pattern           string
+	Line              int
+	Pretty            bool
+	QueryTimeBegin    string
+	QueryTimeEnd      string
+	LockTimeBegin     string
+	LockTimeEnd       string
+	RowsSentBegin     string
+	RowsSentEnd       string
+	RowsExaminedBegin string
+	RowsExaminedEnd   string
+	TimeBegin         string
+	TimeEnd           string
+	RangeOr           bool
+	Location          *time.Location
 }
 
-type SlowLogs []slowlog.Parsed
+func currentLocation() *time.Location {
+	zone, offset := time.Now().In(time.Local).Zone()
 
-type ByQueryTime struct{ SlowLogs }
-type ByLockTime struct{ SlowLogs }
-type ByRowsSent struct{ SlowLogs }
-type ByRowsExamined struct{ SlowLogs }
-type ByTime struct{ SlowLogs }
-
-func (s SlowLogs) Len() int      { return len(s) }
-func (s SlowLogs) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
-
-func (s ByQueryTime) Less(i, j int) bool { return s.SlowLogs[i].QueryTime < s.SlowLogs[j].QueryTime }
-func (s ByLockTime) Less(i, j int) bool  { return s.SlowLogs[i].LockTime < s.SlowLogs[j].LockTime }
-func (s ByRowsSent) Less(i, j int) bool  { return s.SlowLogs[i].RowsSent < s.SlowLogs[j].RowsSent }
-func (s ByRowsExamined) Less(i, j int) bool {
-	return s.SlowLogs[i].RowsExamined < s.SlowLogs[j].RowsExamined
-}
-func (s ByTime) Less(i, j int) bool { return s.SlowLogs[i].Datetime < s.SlowLogs[j].Datetime }
-
-func SortByQueryTime(s SlowLogs, c Config) {
-	if c.Reverse {
-		sort.Sort(sort.Reverse(ByQueryTime{s}))
-	} else {
-		sort.Sort(ByQueryTime{s})
-	}
-	Output(s, c)
-}
-
-func SortByLockTime(s SlowLogs, c Config) {
-	if c.Reverse {
-		sort.Sort(sort.Reverse(ByLockTime{s}))
-	} else {
-		sort.Sort(ByLockTime{s})
-	}
-	Output(s, c)
-}
-
-func SortByRowsSent(s SlowLogs, c Config) {
-	if c.Reverse {
-		sort.Sort(sort.Reverse(ByRowsSent{s}))
-	} else {
-		sort.Sort(ByRowsSent{s})
-	}
-	Output(s, c)
-}
-
-func SortByRowsExamined(s SlowLogs, c Config) {
-	if c.Reverse {
-		sort.Sort(sort.Reverse(ByRowsExamined{s}))
-	} else {
-		sort.Sort(ByRowsExamined{s})
-	}
-	Output(s, c)
-}
-
-func SortByTime(s SlowLogs, c Config) {
-	if c.Reverse {
-		sort.Sort(sort.Reverse(ByTime{s}))
-	} else {
-		sort.Sort(ByTime{s})
-	}
-	Output(s, c)
-}
-
-func Output(slowlogs SlowLogs, c Config) {
-	i := 0
-	for _, s := range slowlogs {
-		if c.Pattern == "" {
-			outputRow(s, c)
-			i++
-		} else {
-			re := regexp.MustCompile(c.Pattern)
-			if ok := re.Match([]byte(s.Sql)); ok {
-				outputRow(s, c)
-				i++
-			}
-		}
-
-		if c.Line != 0 && c.Line <= i {
-			break
-		}
-	}
-}
-
-func outputRow(s slowlog.Parsed, c Config) {
-	t := time.Unix(s.Datetime, 0)
-
-	if c.Pretty {
-		fmt.Printf("Query_time:%f\tLock_time:%f\tRows_sent:%d\tRows_examined:%d\ttime:%s\n\n",
-			s.QueryTime, s.LockTime, s.RowsSent, s.RowsExamined, t,
-		)
-		fmt.Println(s.Sql)
-		fmt.Println("")
-	} else {
-		fmt.Printf("Query_time:%f\tLock_time:%f\tRows_sent:%d\tRows_examined:%d\ttime:%s\tsql:%s\n",
-			s.QueryTime, s.LockTime, s.RowsSent, s.RowsExamined, t, s.Sql,
-		)
-	}
+	return time.FixedZone(zone, offset)
 }
 
 var (
-	file    = kingpin.Flag("file", "slow query log").Short('f').String()
-	reverse = kingpin.Flag("reverse", "reverse the result of comparisons").Short('r').Bool()
-	pretty  = kingpin.Flag("pretty", "pretty print").Bool()
-	pattern = kingpin.Flag("query-pattern", "query matching PATTERN").Short('p').PlaceHolder("PATTERN").String()
-	sortBy  = kingpin.Flag("sort", "sort by (query_time, lock_time, rows_sent, rows_examined, time)").Short('s').Default("query_time").String()
-	nol     = kingpin.Flag("num", "number of lines (0 = all)").Short('n').Default("0").Int()
+	file     = kingpin.Flag("file", "slow query log").Short('f').String()
+	reverse  = kingpin.Flag("reverse", "reverse the result of comparisons").Short('r').Bool()
+	pretty   = kingpin.Flag("pretty", "pretty print").Bool()
+	pattern  = kingpin.Flag("query-pattern", "query matching PATTERN").Short('p').PlaceHolder("PATTERN").String()
+	sortBy   = kingpin.Flag("sort", "sort by (query_time, lock_time, rows_sent, rows_examined, time)").Short('s').Default("query_time").String()
+	nol      = kingpin.Flag("num", "number of lines (0 = all)").Short('n').Default("0").Int()
+	qtBegin  = kingpin.Flag("query-time-begin", "query_time begin").PlaceHolder("TIME").String()
+	qtEnd    = kingpin.Flag("query-time-end", "query_time end").PlaceHolder("TIME").String()
+	ltBegin  = kingpin.Flag("lock-time-begin", "lock_time begin").PlaceHolder("TIME").String()
+	ltEnd    = kingpin.Flag("lock-time-end", "lock_time end").PlaceHolder("TIME").String()
+	rsBegin  = kingpin.Flag("rows-sent-begin", "rows_sent begin").PlaceHolder("NUM").String()
+	rsEnd    = kingpin.Flag("rows-sent-end", "rows_sent end").PlaceHolder("NUM").String()
+	reBegin  = kingpin.Flag("rows-examined-begin", "rows_examined begin").PlaceHolder("NUM").String()
+	reEnd    = kingpin.Flag("rows-examined-end", "rows_examined end").PlaceHolder("NUM").String()
+	tBegin   = kingpin.Flag("time-begin", "time begin").PlaceHolder("TIME").String()
+	tEnd     = kingpin.Flag("time-end", "time end").PlaceHolder("TIME").String()
+	location = kingpin.Flag("location", "location (default: current location)").String()
+	rangeOr  = kingpin.Flag("or", "option conditions (default: and)").Bool()
 )
 
 func main() {
 	kingpin.CommandLine.Help = "MySQL slow query log sorter (read from file or stdin)."
-	kingpin.Version("0.1.1")
+	kingpin.Version("0.2.0")
 	kingpin.Parse()
 
 	fileinfo, err := os.Stdin.Stat()
@@ -150,20 +78,61 @@ func main() {
 	}
 
 	parser := slowlog.NewParser()
-
 	c := Config{
-		Reverse: *reverse,
-		Pattern: *pattern,
-		Line:    *nol,
-		Pretty:  *pretty,
+		Reverse:           *reverse,
+		Pattern:           *pattern,
+		Line:              *nol,
+		Pretty:            *pretty,
+		QueryTimeBegin:    *qtBegin,
+		QueryTimeEnd:      *qtEnd,
+		LockTimeBegin:     *ltBegin,
+		LockTimeEnd:       *ltEnd,
+		RowsSentBegin:     *rsBegin,
+		RowsSentEnd:       *rsEnd,
+		RowsExaminedBegin: *reBegin,
+		RowsExaminedEnd:   *reEnd,
+		TimeBegin:         *tBegin,
+		TimeEnd:           *tEnd,
+		RangeOr:           *rangeOr,
+	}
+
+	if *location == "" {
+		c.Location = currentLocation()
+	} else {
+		var loc *time.Location
+		loc, err = time.LoadLocation(*location)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		c.Location = loc
 	}
 
 	slowlogs := SlowLogs{}
+
+	re := regexp.MustCompile(c.Pattern)
+	i := 1
 	for parsed := range parser.Parse(f) {
+
 		if parsed.Sql == "" {
 			continue
 		}
+
+		if c.Pattern != "" && !re.Match([]byte(parsed.Sql)) {
+			continue
+		}
+
+		if !VerifyRange(parsed, c) {
+			continue
+		}
+
 		slowlogs = append(slowlogs, parsed)
+
+		if c.Line != 0 && c.Line <= i {
+			break
+		}
+
+		i++
 	}
 
 	switch *sortBy {
